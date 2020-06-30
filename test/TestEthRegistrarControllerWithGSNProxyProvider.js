@@ -39,6 +39,9 @@ contract.only('TestEthRegistrarControllerWithGSNProxyProvider', function (accoun
     const registrantAccount = accounts[1]; // Account that owns test names
 
     let gasless
+    let proxyAddress
+    let proxyFactoryContract
+
     before(async () => {
         gasless = await web3.eth.personal.newAccount('password')
         await web3.eth.personal.unlockAccount(gasless, 'password')
@@ -61,7 +64,7 @@ contract.only('TestEthRegistrarControllerWithGSNProxyProvider', function (accoun
         await controller.setPriceOracle(priceOracle.address, {from: ownerAccount});
 
         // GSN + ProxyFactory + TokenPaymaster setup
-        const proxyFactoryContract = new Contract(proxyFactoryOutput.abi)
+        proxyFactoryContract = new Contract(proxyFactoryOutput.abi)
         proxyFactoryContract.setProvider(web3.currentProvider)
         const gas = 1e7
         const proxyFactory = await proxyFactoryContract.deploy({
@@ -107,7 +110,8 @@ contract.only('TestEthRegistrarControllerWithGSNProxyProvider', function (accoun
             relayHubAddress,
             forwarderAddress,
             stakeManagerAddress,
-            paymasterAddress: paymaster._address
+            paymasterAddress: paymaster._address,
+            verbose: true
         }
         const proxyRelayProvider = new ProxyRelayProvider(
           proxyFactory._address,
@@ -120,9 +124,9 @@ contract.only('TestEthRegistrarControllerWithGSNProxyProvider', function (accoun
           }
         )
 
-        const proxyAddress = await proxyRelayProvider.calculateProxyAddress(gasless)
+        proxyAddress = await proxyRelayProvider.calculateProxyAddress(gasless)
 
-        await token.mint(10e18.toString())
+        await token.mint(1e20.toString())
         await token.transfer(proxyAddress, 1e18.toString())
 
         ETHRegistrarController.web3.setProvider(proxyRelayProvider)
@@ -135,9 +139,15 @@ contract.only('TestEthRegistrarControllerWithGSNProxyProvider', function (accoun
         });
         assert.equal(await controller.commitments(commitment), (await web3.eth.getBlock(tx.receipt.blockNumber)).timestamp);
 
+        await expectEvent.inTransaction(tx.tx, proxyFactoryContract, 'ProxyDeployed', { proxyAddress })
+
         await evm.advanceTime((await controller.minCommitmentAge()).toNumber());
         var balanceBefore = await web3.eth.getBalance(controller.address);
-        var tx = await controller.register("newname", registrantAccount, 28 * DAYS, secret, {value: 28 * DAYS + 1, gasPrice: 0});
+        var tx = await controller.register('newname', registrantAccount, 28 * DAYS, secret, {
+          value: 28 * DAYS + 1,
+          gasPrice: 0,
+          from: gasless
+        })
         assert.equal(tx.logs.length, 1);
         assert.equal(tx.logs[0].event, "NameRegistered");
         assert.equal(tx.logs[0].args.name, "newname");
